@@ -16,11 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -39,6 +35,9 @@ public class CacheHandler {
     @Autowired
     private CacheService cacheService;
 
+    /**
+     * 是否启用缓存
+     */
     private String useCacheStr = "true";
 
     /**
@@ -57,7 +56,7 @@ public class CacheHandler {
     private static final Map<String, Integer> URI_EXPIRE_EMPTY_MAP = new ConcurrentHashMap<>();
 
 
-    @Around(value = "execution(* com.simon..*.*(..))&&@annotation(com.simon.annotation.Cache)")
+    @Around(value = "execution(* com.simon..*.*(..)) && @annotation(com.simon.annotation.Cache)")
     private Object cacheAround(ProceedingJoinPoint joinPoint) throws Throwable {
 
         boolean useCache = Boolean.valueOf(useCacheStr);
@@ -80,7 +79,7 @@ public class CacheHandler {
         try {
             // 获取缓存值
             String cacheResult;
-            if (useCache && uri != null && args != null && cache != null && (cacheResult = this.getCacheResult(cache, uri, args)) != null) {
+            if (useCache && uri != null && args != null && cache != null && (cacheResult = this.getCacheResult(joinPoint, cache, uri, args)) != null) {
                 return cacheResult;
             }
 
@@ -88,22 +87,24 @@ public class CacheHandler {
         }finally {
             // result不为空并且开启缓存
             if (useCache && uri != null && args != null && cache != null && result != null && expired > 0) {
-                this.cache(uri, args, cache, result, expired);
+                this.cache(joinPoint,uri, args, cache, result, expired);
             }
         }
     }
 
     /**
      * 获取缓存结果
+     *
+     * @param joinPoint
      * @param cache
      * @param uri
      * @param args
      * @return
      */
-    private String getCacheResult(Cache cache, String uri, String args) {
+    private String getCacheResult(ProceedingJoinPoint joinPoint, Cache cache, String uri, String args) {
         try{
             // 拼接缓存key
-            String key = getKey(cache,uri,args);
+            String key = getKey(joinPoint,cache,uri,args);
             // 获取缓存结果
             return cacheService.get(key);
         }catch (Exception e){
@@ -115,16 +116,17 @@ public class CacheHandler {
     /**
      * 获取缓存key
      * @description 由 url + 参数 + 特征码版本号 构成。每个特征码有一个唯一的版本号(第一次生成时的时间戳)，如果让缓存失效时，将特征码版本号+1即可
+     * @param joinPoint
      * @param cache
      * @param uri
      * @param args
      * @return
      */
-    private String getKey(Cache cache, String uri, String args) {
+    private String getKey(ProceedingJoinPoint joinPoint, Cache cache, String uri, String args) {
         try {
             // 格式化url和入参
             String key = (uri + "_" + args).replace("\"", "").replace("/", "_").replace(" ", "");
-            return key + "_" + this.getSuffix(cache);
+            return key + "_" + this.getSuffix(joinPoint,cache);
         }catch (Exception e){
             logger.error("error",e);
         }
@@ -134,14 +136,17 @@ public class CacheHandler {
 
     /**
      * 获取后缀
+     *
+     * @param joinPoint
      * @param cache
      * @return
      */
-    private String getSuffix(Cache cache) {
+    private String getSuffix(ProceedingJoinPoint joinPoint, Cache cache) {
         if (cache == null || ObjectUtil.isEmpty(cache.featureCode())) {
             return "";
         }
         Long version = 0L;
+        String keyValue = this.getKeyValue(joinPoint, cache.keyFieldIndex());
         try {
             String value = cacheService.get(cache.featureCode());
             if (value != null) {
@@ -158,7 +163,7 @@ public class CacheHandler {
         } catch (Exception err) {
 
         }
-        return version.toString();
+        return keyValue +"_"+ version.toString();
     }
 
     /**
@@ -169,12 +174,27 @@ public class CacheHandler {
      * @param result
      * @param expired
      */
-    private void cache(String uri, String args, Cache cache, Object result, int expired) {
-        this.cacheService.set(this.getKey(cache, uri, args), result.toString(), expired);
+    private void cache(ProceedingJoinPoint joinPoint,String uri, String args, Cache cache, Object result, int expired) {
+        this.cacheService.set(this.getKey(joinPoint, cache, uri, args), result.toString(), expired);
+    }
+
+    private String getKeyValue(ProceedingJoinPoint point, int keyFieldIndex) {
+        try {
+            if (keyFieldIndex < 0) {
+                return null;
+            }
+            if (point.getArgs() == null || point.getArgs().length < keyFieldIndex) {
+                return null;
+            }
+            return point.getArgs()[keyFieldIndex].toString();
+        } catch (Exception err) {
+            logger.error("", err);
+        }
+        return null;
     }
 
     /**
-     * 获取参数
+     * 获取参数值
      * @param joinPoint
      * @return
      */
@@ -183,19 +203,17 @@ public class CacheHandler {
             if (joinPoint.getArgs() == null || joinPoint.getArgs().length == 0) {
                 return "";
             }
-            List<Object> args = new ArrayList<>();
-            for (Object value : joinPoint.getArgs()) {
-                if (value != null && (value instanceof HttpServletRequest || value instanceof HttpServletResponse)) {
-                    continue;
-                }
-                args.add(value);
-            }
-            return JSON.toJSONString(args.toArray());
+            return JSON.toJSONString(joinPoint.getArgs());
         } catch (Exception err) {
             return null;
         }
     }
 
+    /**
+     * 获取过期时间
+     * @param cache
+     * @return
+     */
     private int getExpire(Cache cache) {
 
         if(ObjectUtil.isNull(cache)){
@@ -204,10 +222,15 @@ public class CacheHandler {
 
         int expire = 60;
         try {
-            return cache.defaultExpired();
+            String value = null; // 从配置中心获取，配置中心key为：cache.expireKey()
+            if (value == null || value.length() < 1) {
+                return cache.defaultExpired();
+            }
+            return Integer.valueOf(value);
         }catch (Exception e){
 
         }
+
         return expire;
     }
 

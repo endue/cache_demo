@@ -18,6 +18,7 @@ public @interface Cache {
 
     /**
      * 过期时间默认key
+     * 针对配置中心设置的过期时间
      * @return
      */
     String expireKey() default "cache.expire.key.default";
@@ -35,4 +36,5 @@ public @interface Cache {
      */
     String featureCode() default "feature.code.key.default";
 
+    int keyFieldIndex() default -1;
 }
