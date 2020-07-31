@@ -135,9 +135,15 @@ public class DelayQueueImpl implements DelayQueue {
                         cacheService.zrem(setKey, delayDataId);
                         cacheService.del(dataKey);
                     }catch (Exception e){
+                        // 删除分布式锁
+                        cacheService.del(lockKey);
                         // 执行失败,没有机会
                         if(delay.getNextExecuteTimeSlotIndex() >= delay.getDelaySeconds().length){
+                            // 删除任务
+                            cacheService.zrem(setKey, delayDataId);
+                            cacheService.del(dataKey);
                             // TODO 执行失败，记录日志
+                            System.out.println("执行失败");
                             return;
                         }
 
