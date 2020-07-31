@@ -4,6 +4,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -18,14 +19,26 @@ public class CacheService {
     @Resource
     private StringRedisTemplate redisTemplate;
 
+    public Boolean lock (String key,int expired){
+        redisTemplate.multi();
+        Boolean result = redisTemplate.opsForValue().setIfAbsent(key, "1");
+        if(result){
+            redisTemplate.expire(key,expired,TimeUnit.SECONDS);
+        }
+        redisTemplate.exec();
+        return result;
+    }
 
     public void set(String key,String value,int expired){
-        redisTemplate.opsForValue().set(key,value);
-        redisTemplate.expire(key,expired, TimeUnit.SECONDS);
+        redisTemplate.opsForValue().set(key,value,expired, TimeUnit.SECONDS);
     }
 
     public String get(String key){
         return redisTemplate.opsForValue().get(key);
+    }
+
+    public void del(String key){
+        redisTemplate.delete(key);
     }
 
     public Long incr(String key){
@@ -94,4 +107,16 @@ public class CacheService {
         }
         redisTemplate.opsForHash().delete(key, field);
     }
+
+    public void zadd(String key, String data, double score){
+        redisTemplate.opsForZSet().add(key,data,score);
+    };
+
+    public void zrem(String key, String data){
+        redisTemplate.opsForZSet().remove(key,data);
+    };
+
+    public Set<String> zrangeByScore(String key, double min, double max){
+        return redisTemplate.opsForZSet().rangeByScore(key,min,max);
+    };
 }
