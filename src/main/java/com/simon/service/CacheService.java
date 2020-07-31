@@ -20,13 +20,7 @@ public class CacheService {
     private StringRedisTemplate redisTemplate;
 
     public Boolean lock (String key,int expired){
-        redisTemplate.multi();
-        Boolean result = redisTemplate.opsForValue().setIfAbsent(key, "1");
-        if(result){
-            redisTemplate.expire(key,expired,TimeUnit.SECONDS);
-        }
-        redisTemplate.exec();
-        return result;
+        return redisTemplate.opsForValue().setIfAbsent(key, "1",expired,TimeUnit.SECONDS);
     }
 
     public void set(String key,String value,int expired){
